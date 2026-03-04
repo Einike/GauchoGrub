@@ -1,0 +1,19 @@
+{
+  "name": "gauchogrub-final-full-launch",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {"dev":"next dev","build":"next build","start":"next start"},
+  "dependencies": {
+    "@supabase/supabase-js": "^2.52.0",
+    "next": "16.1.6",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "@types/node": "^20.17.0",
+    "@types/react": "^19.0.7",
+    "@types/react-dom": "^19.0.3"
+  }
+}
