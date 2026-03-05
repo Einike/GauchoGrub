@@ -1,18 +1,33 @@
 "use client";
-import { useEffect, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { supabase } from '@/lib/supabaseClient';
 
-export default function AuthGate({children}:{children:React.ReactNode}) {
-  const path = usePathname();
-  const router = useRouter();
-  const [ready,setReady] = useState(false);
-  useEffect(()=>{(async()=>{
-    if (path === "/login") return setReady(true);
-    const { data } = await supabase.auth.getSession();
-    if (!data.session) return router.replace("/login");
-    setReady(true);
-  })();},[path,router]);
-  if(!ready) return <main style={{padding:24}}>Loading...</main>;
+const PUBLIC = ['/login', '/onboarding', '/dev/login', '/'];
+
+export default function AuthGate({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const router   = useRouter();
+  const [ready,  setReady]  = useState(false);
+
+  useEffect(() => {
+    if (PUBLIC.some(p => pathname === p || pathname?.startsWith(p + '/'))) { setReady(true); return; }
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { router.replace('/login'); return; }
+      try {
+        const res = await fetch('/api/profile', { headers: { Authorization: `Bearer ${session.access_token}` } });
+        const d   = await res.json();
+        if (!d.profile?.username) { router.replace('/onboarding'); return; }
+      } catch { router.replace('/login'); return; }
+      setReady(true);
+    })();
+  }, [pathname, router]);
+
+  if (!ready) return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-950">
+      <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
   return <>{children}</>;
 }

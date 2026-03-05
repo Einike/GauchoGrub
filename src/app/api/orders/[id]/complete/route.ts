@@ -1,31 +1,27 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/authServer";
-import { admin } from "@/lib/supabaseAdmin";
+import { NextRequest, NextResponse } from 'next/server';
+import { requireUser } from '@/lib/authServer';
+import { admin } from '@/lib/supabaseAdmin';
+import { OrderStatus, ListingStatus } from '@/lib/status';
+import { notify } from '@/lib/notify';
+import { auditLog } from '@/lib/audit';
 
-export async function POST(req: NextRequest, ctx: { params: Promise<{id:string}> }){
+export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const me = await requireUser(req);
+    const u      = await requireUser(req);
     const { id } = await ctx.params;
-    const { data: order, error } = await admin.from('orders').select('*').eq('id',id).single();
-    if(error||!order) return NextResponse.json({ error:'Order not found' }, { status:404 });
-    if(order.buyer_id !== me.id) return NextResponse.json({ error:'Only buyer confirms completion' }, { status:403 });
-    if(order.status !== 'qr_uploaded') return NextResponse.json({ error:'QR not uploaded yet' }, { status:409 });
+    const { data: order } = await admin.from('orders').select('*').eq('id', id).single();
+    if (!order) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    if (order.buyer_id !== u.id) return NextResponse.json({ error: 'Only buyer can complete' }, { status: 403 });
+    if (order.status !== OrderStatus.QR_UPLOADED)
+      return NextResponse.json({ error: `Cannot complete order in status ${order.status}` }, { status: 400 });
 
-    const { data: updated, error:uerr } = await admin
-      .from('orders')
-      .update({ status:'completed', updated_at:new Date().toISOString() })
-      .eq('id',id)
-      .select()
-      .single();
-
-    if(uerr) return NextResponse.json({ error:uerr.message }, { status:500 });
-
-    await admin
-      .from('listings')
-      .update({ status:'completed', quantity_remaining:0 })
-      .eq('id', order.listing_id);
-
-    await admin.from('messages').insert([{order_id:id,sender_id:me.id,content:'Buyer confirmed successful pickup ✅',is_system:true}]);
-    return NextResponse.json({ order:updated });
-  } catch (e:any) { return NextResponse.json({ error:e.message }, { status:401 }); }
+    await admin.from('orders').update({ status: OrderStatus.COMPLETED, updated_at: new Date().toISOString() }).eq('id', id);
+    await admin.from('listings').update({ status: ListingStatus.COMPLETED, completed_at: new Date().toISOString() }).eq('id', order.listing_id);
+    await auditLog(u.id, 'order.complete', 'order', id);
+    await notify(order.seller_id, 'order_completed', '🎉 Order complete!',
+      'Buyer confirmed pickup. Transaction done!', `/orders/${id}`);
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 401 });
+  }
 }

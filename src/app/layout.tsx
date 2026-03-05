@@ -1,19 +1,46 @@
-import Link from "next/link";
-import AuthGate from "@/components/AuthGate";
+import './globals.css';
+import type { Metadata } from 'next';
+import Link from 'next/link';
+import AuthGate from '@/components/AuthGate';
+import NotifBell from '@/components/NotifBell';
 
-const link: React.CSSProperties = { color:'#dbeafe', textDecoration:'none', fontWeight:700, textAlign:'center' };
+export const metadata: Metadata = {
+  title:       'GauchoGrub — UCSB Ortega Marketplace',
+  description: 'Buy and sell Ortega dining meals at UCSB. No fees.',
+};
 
-export default function RootLayout({children}:{children:React.ReactNode}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body style={{margin:0,fontFamily:'Inter,system-ui',background:'#071226',color:'#e2e8f0'}}>
+      <body className="bg-slate-950 text-white min-h-screen antialiased">
         <AuthGate>
-          <main style={{maxWidth:820,margin:'0 auto',padding:'14px 14px 90px'}}>{children}</main>
-          <nav style={{position:'fixed',bottom:0,left:0,right:0,display:'grid',gridTemplateColumns:'repeat(4,1fr)',padding:12,gap:8,background:'#0a1731',borderTop:'1px solid #223458'}}>
-            <Link href="/board" style={link}>Board</Link>
-            <Link href="/sell" style={link}>Sell</Link>
-            <Link href="/orders" style={link}>Orders</Link>
-            <Link href="/profile" style={link}>Profile</Link>
+          <header className="max-w-xl mx-auto px-4 pt-3 pb-1 flex items-center justify-between">
+            <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition">
+              <span className="text-lg">🌮</span>
+              <span className="font-bold text-white text-sm">GauchoGrub</span>
+            </Link>
+            <NotifBell />
+          </header>
+
+          <main className="max-w-xl mx-auto px-4 py-3 pb-28">
+            {children}
+          </main>
+
+          <nav className="fixed bottom-0 inset-x-0 bg-slate-900/95 backdrop-blur border-t border-slate-700 z-40">
+            <div className="max-w-xl mx-auto grid grid-cols-4">
+              {[
+                { href: '/board',      icon: '🏠', label: 'Board'   },
+                { href: '/sell',       icon: '➕', label: 'Sell'    },
+                { href: '/orders',     icon: '📦', label: 'Orders'  },
+                { href: '/profile', icon: '👤', label: 'Profile' },
+              ].map(({ href, icon, label }) => (
+                <Link key={href} href={href}
+                  className="flex flex-col items-center gap-0.5 py-3 text-slate-400 hover:text-white transition-colors text-xs">
+                  <span className="text-xl leading-none">{icon}</span>
+                  <span>{label}</span>
+                </Link>
+              ))}
+            </div>
           </nav>
         </AuthGate>
       </body>

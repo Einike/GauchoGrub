@@ -1,113 +1,121 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/authServer";
-import { admin } from "@/lib/supabaseAdmin";
+import { NextRequest, NextResponse } from 'next/server';
+import { requireUser } from '@/lib/authServer';
+import { admin } from '@/lib/supabaseAdmin';
+import { ListingStatus, ACTIVE_LISTING_STATUSES, SELLER_COOLDOWN_MS } from '@/lib/status';
+import { ortegaClosedReason } from '@/lib/ortegaHours';
+import { notify } from '@/lib/notify';
+import { auditLog } from '@/lib/audit';
 
-const MIN_PRICE_CENTS = 0;
-const MAX_PRICE_CENTS = 600;
+export async function GET(req: NextRequest) {
+  try {
+    await requireUser(req);
+    const now = new Date().toISOString();
 
-export async function GET(req: NextRequest){
-try {
-await requireUser(req);
+    // Auto-expire stale locks
+    await admin.from('listings')
+      .update({ status: ListingStatus.OPEN, locked_by: null, lock_until: null })
+      .eq('status', ListingStatus.LOCKED).lt('lock_until', now);
 
-// Safer query: no FK-name dependency
-const { data: rows, error } = await admin
-.from('listings')
-.select('id,price_cents,dining_location,expires_at,tags,seller_id,status,created_at')
-.eq('status','open')
-.order('created_at',{ascending:false})
-.limit(100);
+    const { data: rows, error } = await admin
+      .from('listings')
+      .select('id,seller_id,price_cents,expires_at,status,created_at,tags')
+      .eq('status', ListingStatus.OPEN)
+      .gt('expires_at', now)
+      .order('created_at', { ascending: false });
 
-if(error) return NextResponse.json({ error:error.message }, { status:500 });
+    if (error) return NextResponse.json({ error: 'Failed to load listings' }, { status: 500 });
 
-const sellerIds = [...new Set((rows || []).map((r:any)=>r.seller_id).filter(Boolean))];
-let sellerMap: Record<string, { username?: string; rating_avg?: number }> = {};
+    const sellerIds = [...new Set((rows ?? []).map((r: any) => r.seller_id))];
+    let sellerMap: Record<string, string> = {};
+    if (sellerIds.length) {
+      const { data: ps } = await admin.from('profiles').select('id,username').in('id', sellerIds);
+      sellerMap = Object.fromEntries((ps ?? []).map((p: any) => [p.id, p.username ?? 'seller']));
+    }
 
-if (sellerIds.length > 0) {
-const { data: sellers } = await admin
-.from('users')
-.select('id,username,rating_avg')
-.in('id', sellerIds);
-
-sellerMap = Object.fromEntries((sellers || []).map((s:any)=>[s.id, s]));
+    return NextResponse.json({
+      listings: (rows ?? []).map((x: any) => ({ ...x, seller_username: sellerMap[x.seller_id] ?? 'seller' })),
+    });
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 401 });
+  }
 }
 
-const listings = (rows||[]).map((x:any)=>({
-id:x.id,
-price_cents:x.price_cents,
-dining_location:x.dining_location,
-expires_at:x.expires_at,
-tags:x.tags||[],
-seller_username:sellerMap[x.seller_id]?.username || 'seller',
-seller_rating:Number(sellerMap[x.seller_id]?.rating_avg || 5)
-}));
+export async function POST(req: NextRequest) {
+  try {
+    const u = await requireUser(req);
 
-return NextResponse.json({ listings });
-} catch (e:any) {
-return NextResponse.json({ error:e.message }, { status:401 });
-}
-}
+    // Hours gate
+    const closed = ortegaClosedReason();
+    if (closed) return NextResponse.json({ error: closed }, { status: 400 });
 
-export async function POST(req: NextRequest){
-try {
-const me = await requireUser(req);
-const body = await req.json();
-const { price_cents, dining_location, expires_at, tags } = body;
+    const body = await req.json().catch(() => ({}));
+    const { price_cents, expires_at } = body;
 
-if (price_cents == null || !expires_at) {
-return NextResponse.json({ error:'Missing fields' }, { status:400 });
-}
+    if (price_cents == null || !expires_at)
+      return NextResponse.json({ error: 'price_cents and expires_at are required' }, { status: 400 });
+    if (typeof price_cents !== 'number' || price_cents < 0 || price_cents > 600)
+      return NextResponse.json({ error: 'Price must be $0–$6.00' }, { status: 400 });
+    if (new Date(expires_at) <= new Date())
+      return NextResponse.json({ error: 'expires_at must be in the future' }, { status: 400 });
 
-if (price_cents < MIN_PRICE_CENTS || price_cents > MAX_PRICE_CENTS) {
-return NextResponse.json({ error:'Price must be between $0 and $6.00' }, { status:400 });
-}
+    const nowIso = new Date().toISOString();
 
-const available_quantity = 1;
+    // Auto-cancel stale
+    await admin.from('listings').update({ status: ListingStatus.EXPIRED })
+      .eq('seller_id', u.id)
+      .in('status', [ListingStatus.OPEN, ListingStatus.LOCKED])
+      .lt('expires_at', nowIso);
 
-const ninetyMinutesAgo = new Date(Date.now() - 90 * 60 * 1000).toISOString();
-const { data: recent } = await admin
-.from('listings')
-.select('id,created_at')
-.eq('seller_id', me.id)
-.gte('created_at', ninetyMinutesAgo)
-.order('created_at', { ascending: false })
-.limit(1)
-.maybeSingle();
+    // Active listing check (DB partial index also enforces this)
+    const { data: active } = await admin.from('listings')
+      .select('id,expires_at')
+      .eq('seller_id', u.id)
+      .in('status', ACTIVE_LISTING_STATUSES)
+      .gt('expires_at', nowIso)
+      .limit(1);
+    if (active?.length)
+      return NextResponse.json({ error: 'You already have an active listing', active_listing_id: active[0].id, active_expires_at: active[0].expires_at }, { status: 409 });
 
-if (recent) {
-return NextResponse.json({ error:'You can only post one meal every 90 minutes.' }, { status:409 });
-}
+    // Seller cooldown — must wait after last completed/cancelled
+    const cooldownAfter = new Date(Date.now() - SELLER_COOLDOWN_MS).toISOString();
+    const { data: recent } = await admin.from('listings')
+      .select('completed_at,created_at')
+      .eq('seller_id', u.id)
+      .in('status', [ListingStatus.COMPLETED, ListingStatus.CANCELLED, ListingStatus.EXPIRED])
+      .gt('created_at', cooldownAfter)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (recent?.length) {
+      const wait = Math.ceil((new Date(recent[0].created_at).getTime() + SELLER_COOLDOWN_MS - Date.now()) / 60_000);
+      return NextResponse.json({ error: `Please wait ${wait} more min before posting again (cooldown)` }, { status: 429 });
+    }
 
-const { data: active } = await admin
-.from('listings')
-.select('id')
-.eq('seller_id', me.id)
-.in('status',['open','locked','in_progress'])
-.maybeSingle();
+    const { data, error } = await admin.from('listings').insert([{
+      seller_id:          u.id,
+      dining_location:    'Ortega',
+      price_cents,
+      status:             ListingStatus.OPEN,
+      expires_at,
+      pickup_start:       nowIso,
+      pickup_end:         expires_at,
+      available_quantity: 1,
+      quantity_remaining: 1,
+      fee_cents:          0,
+      total_cents:        price_cents,
+      tags:               [],
+    }]).select().single();
 
-if(active) return NextResponse.json({ error:'You already have an active listing' }, { status:409 });
+    if (error) {
+      // Handle partial index violation (active listing exists)
+      if (error.message.includes('listings_one_active_per_seller'))
+        return NextResponse.json({ error: 'You already have an active listing' }, { status: 409 });
+      console.error('[listing.create]', error);
+      return NextResponse.json({ error: 'Failed to create listing' }, { status: 500 });
+    }
 
-const pickup_start = new Date().toISOString();
-const pickup_end = expires_at;
-
-const { data, error } = await admin.from('listings').insert([{
-seller_id:me.id,
-price_cents,
-available_quantity,
-quantity_remaining:available_quantity,
-dining_location:dining_location||'Ortega',
-status:'open',
-expires_at,
-pickup_start,
-pickup_end,
-fee_cents: 0,
-total_cents: price_cents,
-tags:tags||[]
-}]).select().single();
-
-if(error) return NextResponse.json({ error:error.message }, { status:500 });
-
-return NextResponse.json({ listing:data });
-} catch (e:any) {
-return NextResponse.json({ error:e.message }, { status:401 });
-}
+    await auditLog(u.id, 'listing.create', 'listing', data.id, { price_cents });
+    return NextResponse.json({ listing: data }, { status: 201 });
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 401 });
+  }
 }

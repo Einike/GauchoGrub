@@ -1,3 +1,10 @@
-import type { NextConfig } from "next";
-const config: NextConfig = {};
-export default config;
+import type { NextConfig } from 'next';
+const nextConfig: NextConfig = {
+  experimental: {
+    serverActions: { bodySizeLimit: '12mb' },
+  },
+  logging: {
+    fetches: { fullUrl: false },
+  },
+};
+export default nextConfig;

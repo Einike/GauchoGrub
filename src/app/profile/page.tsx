@@ -1,62 +1,74 @@
 "use client";
-import { useEffect, useState } from "react";
-import Card from "@/components/Card";
-import { supabase } from "@/lib/supabaseClient";
-import { authedFetch } from "@/lib/fetcher";
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabaseClient';
+import { authedFetch, jsonOrThrow } from '@/lib/fetcher';
 
-export default function Profile(){
-  const [email,setEmail]=useState('');
-  const [username,setUsername]=useState('');
-  const [mode,setMode]=useState<'buyer'|'seller'>('buyer');
-  const [msg,setMsg]=useState('');
-  const [busy,setBusy]=useState(false);
+type Profile = { id: string; username: string; email: string; created_at: string };
 
-  useEffect(()=>{(async()=>{
-    const { data } = await supabase.auth.getUser();
-    const u = data.user; if(!u) return;
-    setEmail(u.email || '');
-    const r = await authedFetch('/api/profile');
-    const d = await r.json();
-    if (d.profile) {
-      setUsername(d.profile.username || '');
-      setMode((d.profile.role_mode || 'buyer') as any);
-    }
-  })();},[]);
+export default function ProfilePage() {
+  const router = useRouter();
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err,     setErr]     = useState('');
 
-  const save = async () => {
-    setBusy(true);
-    const r = await authedFetch('/api/auth/register',{method:'POST',body:JSON.stringify({username,role_mode:mode})});
-    const d = await r.json();
-    setMsg(r.ok ? 'Saved ✅' : (d.error || 'Failed'));
-    setBusy(false);
+  useEffect(() => {
+    (async () => {
+      try {
+        const d = await jsonOrThrow<{ profile: Profile }>(await authedFetch('/api/profile'));
+        setProfile(d.profile);
+      } catch (e: any) { setErr(e.message ?? 'Failed to load profile'); }
+      finally { setLoading(false); }
+    })();
+  }, []);
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    router.replace('/login');
   };
 
-  const signOut = async()=>{ await supabase.auth.signOut(); location.href='/login'; };
+  if (loading) return (
+    <div className="flex justify-center p-10">
+      <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
 
-  return <main style={{display:'grid',gap:12}}>
-    <h1 style={{fontSize:32,margin:0}}>Profile</h1>
-    <Card>
-      <p style={{marginTop:0,color:'#93c5fd'}}>1) Pick a username 2) Pick your current mode 3) Save</p>
-      <label style={label}>UCSB Email</label>
-      <input value={email} disabled style={inp}/>
+  return (
+    <div className="space-y-5">
+      <h1 className="text-2xl font-black">👤 Profile</h1>
 
-      <label style={label}>Username</label>
-      <input value={username} onChange={e=>setUsername(e.target.value)} placeholder='example: gauchojane' style={inp}/>
+      {err && <p className="text-rose-400 text-sm">{err}</p>}
 
-      <label style={label}>Current mode</label>
-      <div style={{display:'flex',gap:8,marginBottom:12}}>
-        <button onClick={()=>setMode('buyer')} style={mode==='buyer'?btn:ghost}>Buyer</button>
-        <button onClick={()=>setMode('seller')} style={mode==='seller'?btn:ghost}>Seller</button>
-      </div>
+      {profile && (
+        <>
+          <section className="rounded-2xl border border-slate-700 bg-slate-900/40 p-6 text-center space-y-3">
+            <div className="w-16 h-16 rounded-full bg-blue-900/40 border border-blue-700 flex items-center justify-center text-3xl mx-auto">🌮</div>
+            <div>
+              <p className="text-xl font-black text-white">@{profile.username}</p>
+              <p className="text-slate-400 text-sm">{profile.email}</p>
+            </div>
+            <p className="text-slate-600 text-xs">
+              Member since {new Date(profile.created_at).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+            </p>
+          </section>
 
-      <button onClick={save} disabled={busy} style={btn}>{busy?'Saving...':'Save profile'}</button>
-      <button onClick={signOut} style={ghost}>Log out</button>
-      <p style={{marginBottom:0,color:msg.includes('✅')?'#86efac':'#fca5a5'}}>{msg}</p>
-    </Card>
-  </main>
+          <section className="rounded-2xl border border-slate-700 bg-slate-900/40 p-4 space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-slate-400">Username</span>
+              <span className="font-mono text-white">@{profile.username}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-400">Email</span>
+              <span className="text-slate-300">{profile.email}</span>
+            </div>
+          </section>
+
+          <button onClick={signOut}
+            className="w-full py-3 rounded-xl border border-rose-800 text-rose-400 hover:bg-rose-950/30 font-medium text-sm transition">
+            Sign out
+          </button>
+        </>
+      )}
+    </div>
+  );
 }
-
-const label: React.CSSProperties={display:'block',marginBottom:6,fontSize:14,color:'#bfdbfe'};
-const inp: React.CSSProperties={width:'100%',padding:12,borderRadius:10,border:'1px solid #33507f',background:'#081224',color:'#e2e8f0',marginBottom:10};
-const btn: React.CSSProperties={padding:'10px 14px',borderRadius:10,border:'1px solid #60a5fa',background:'#2563eb',color:'#fff',fontWeight:700,marginRight:8};
-const ghost: React.CSSProperties={...btn,background:'#0f172a',border:'1px solid #475569'};
