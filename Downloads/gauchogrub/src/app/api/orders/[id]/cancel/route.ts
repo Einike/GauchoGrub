@@ -30,15 +30,20 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         cancel_reason_text = body.cancel_reason_text.trim().slice(0, 500);
     } catch { /* no body — fine */ }
 
+    // Build update payload — core fields always present.
+    // Optional reason columns (added in migration 0008) are only included when
+    // non-null so a missing column never blocks a cancel with no reason provided.
+    const updatePayload: Record<string, unknown> = {
+      status:     OrderStatus.CANCELLED,
+      updated_at: new Date().toISOString(),
+      cancelled_by: u.id,
+    };
+    if (cancel_reason_code) updatePayload.cancel_reason_code = cancel_reason_code;
+    if (cancel_reason_text) updatePayload.cancel_reason_text = cancel_reason_text;
+
     // Update order — check error
     const { error: orderErr } = await admin.from('orders')
-      .update({
-        status:             OrderStatus.CANCELLED,
-        updated_at:         new Date().toISOString(),
-        cancelled_by:       u.id,
-        cancel_reason_code,
-        cancel_reason_text,
-      })
+      .update(updatePayload)
       .eq('id', id);
     if (orderErr) {
       console.error('[cancel] order update failed:', orderErr);
