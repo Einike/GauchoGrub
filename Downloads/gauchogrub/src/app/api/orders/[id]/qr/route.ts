@@ -5,7 +5,7 @@ import { OrderStatus } from '@/lib/status';
 import { notify } from '@/lib/notify';
 import { auditLog } from '@/lib/audit';
 
-export const BUCKET = 'order-qr';
+const BUCKET = 'order-qr';
 
 // POST: seller uploads QR
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {

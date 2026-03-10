@@ -31,7 +31,7 @@ export default function BoardPage() {
   const [err,   setErr]   = useState('');
   const [busy,  setBusy]  = useState('');
   const [toast, setToast] = useState('');
-  const tt = useRef<ReturnType<typeof setTimeout>>();
+  const tt = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // FIX: was "const closed = ortegaClosedReason()" at module/render scope — hydration error.
   // Now lives in state, populated only inside useEffect (client-only).

@@ -168,7 +168,7 @@ export default function AuditPage() {
   const [logFilter, setLogFilter] = useState('');
   const [forceCancelId, setForceCancelId] = useState<string | null>(null);
   const [toast, setToast] = useState('');
-  const toastRef = useRef<ReturnType<typeof setTimeout>>();
+  const toastRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const showToast = (msg: string) => {
     setToast(msg); clearTimeout(toastRef.current);
