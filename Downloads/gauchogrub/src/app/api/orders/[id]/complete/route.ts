@@ -21,7 +21,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       .eq('id', id);
     if (updateErr) {
       console.error('[complete] DB update failed:', updateErr);
-      return NextResponse.json({ error: `Failed to complete order: ${updateErr.message}` }, { status: 500 });
+      return NextResponse.json({ error: 'Failed to complete order' }, { status: 500 });
     }
 
     const { error: listingErr } = await admin.from('listings')
@@ -42,6 +42,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     ]);
     return NextResponse.json({ ok: true });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 401 });
+    return NextResponse.json({ error: e.message }, { status: e.status ?? 500 });
   }
 }

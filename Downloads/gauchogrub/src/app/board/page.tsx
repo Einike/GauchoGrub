@@ -29,8 +29,9 @@ export default function BoardPage() {
   const [myId,  setMyId]  = useState('');
   const [load,  setLoad]  = useState(true);
   const [err,   setErr]   = useState('');
-  const [busy,  setBusy]  = useState('');
-  const [toast, setToast] = useState('');
+  const [busy,      setBusy]      = useState('');
+  const [toast,     setToast]     = useState('');
+  const [toastKind, setToastKind] = useState<'error' | 'limit'>('error');
   const tt = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // FIX: was "const closed = ortegaClosedReason()" at module/render scope — hydration error.
@@ -42,9 +43,9 @@ export default function BoardPage() {
     return () => clearInterval(t);
   }, []);
 
-  const showToast = (m: string) => {
-    setToast(m); clearTimeout(tt.current);
-    tt.current = setTimeout(() => setToast(''), 5000);
+  const showToast = (m: string, kind: 'error' | 'limit' = 'error') => {
+    setToast(m); setToastKind(kind); clearTimeout(tt.current);
+    tt.current = setTimeout(() => setToast(''), kind === 'limit' ? 8000 : 5000);
   };
 
   const fetch_ = async () => {
@@ -66,10 +67,16 @@ export default function BoardPage() {
     if (closed) { showToast(closed); return; }
     try {
       setBusy(listingId);
-      const d = await jsonOrThrow<{ order: { id: string } }>(
-        await authedFetch(`/api/listings/${listingId}/claim`, { method: 'POST' })
-      );
-      router.push(`/orders/${d.order.id}`);
+      const res  = await authedFetch(`/api/listings/${listingId}/claim`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        // Daily limit gets a distinct amber banner; all other errors stay red
+        const isLimit = res.status === 429 && data.daily_limit != null;
+        showToast(data.error ?? `Error ${res.status}`, isLimit ? 'limit' : 'error');
+        await fetch_();
+        return;
+      }
+      router.push(`/orders/${data.order.id}`);
     } catch (e: any) { showToast(e.message); await fetch_(); }
     finally { setBusy(''); }
   };
@@ -77,7 +84,11 @@ export default function BoardPage() {
   return (
     <div className="space-y-4">
       {toast && (
-        <div className="fixed top-3 inset-x-4 z-50 rounded-xl bg-rose-900 border border-rose-600 text-rose-100 px-4 py-3 text-sm text-center shadow-xl">
+        <div className={`fixed top-3 inset-x-4 z-50 rounded-xl px-4 py-3 text-sm text-center shadow-xl border
+          ${toastKind === 'limit'
+            ? 'bg-amber-950/90 border-amber-600 text-amber-200'
+            : 'bg-rose-900 border-rose-600 text-rose-100'}`}>
+          {toastKind === 'limit' && <span className="mr-1">🍽️</span>}
           {toast}
         </div>
       )}

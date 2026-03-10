@@ -49,3 +49,6 @@ export const SELLER_COOLDOWN_MS = 90 * 60_000;  // 90 min after listing ends
 export const BUYER_COOLDOWN_MS  = 90 * 60_000;  // 90 min after completing purchase
 export const CLAIM_COOLDOWN_MS  = 60_000;        // 1 min between buyer claims (in-memory rate limit)
 export const LOCK_DURATION_MS   = 10 * 60_000;   // 10 min lock for buyer to customize
+
+// Abuse prevention limits
+export const DAILY_BUYER_CLAIM_LIMIT = 3; // max claims per buyer per Pacific calendar day
