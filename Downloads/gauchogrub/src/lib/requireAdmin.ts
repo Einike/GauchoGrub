@@ -16,10 +16,9 @@ export async function requireAdmin(req: NextRequest): Promise<{ id: string; emai
 
   const email = (data.user.email ?? '').toLowerCase();
 
-  // In dev: any authenticated user can access admin
-  // In production: must be in ADMIN_EMAILS
-  const isDev = process.env.APP_ENV !== 'production';
-  if (!isDev && !ADMIN_EMAILS.includes(email)) {
+  // Always enforce admin allow-list regardless of environment.
+  // Never use a dev bypass here — admin routes control bans, exports, and force-cancels.
+  if (!ADMIN_EMAILS.includes(email)) {
     throw Object.assign(new Error('Admin access required'), { status: 403 });
   }
 

@@ -82,7 +82,7 @@ export async function GET(req: NextRequest) {
       headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' },
     });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 401 });
+    return NextResponse.json({ error: e.message }, { status: e.status ?? 500 });
   }
 }
 

@@ -1,15 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/requireAdmin';
 import { admin } from '@/lib/supabaseAdmin';
+import { auditLog } from '@/lib/audit';
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAdmin(req);
+    const actor = await requireAdmin(req);
 
     const [ordersRes, profilesRes, listingsRes] = await Promise.all([
-      admin.from('orders').select('id,status,buyer_id,seller_id,amount_cents,created_at,updated_at,order_items'),
-      admin.from('profiles').select('id,username,email'),
-      admin.from('listings').select('id,status,seller_id,price_cents,created_at,completed_at'),
+      admin.from('orders')
+        .select('id,status,buyer_id,seller_id,amount_cents,created_at,updated_at,order_items')
+        .limit(5000),
+      admin.from('profiles').select('id,username,email').limit(5000),
+      admin.from('listings')
+        .select('id,status,seller_id,price_cents,created_at,completed_at')
+        .limit(5000),
     ]);
 
     const orders   = ordersRes.data   ?? [];
@@ -36,6 +41,12 @@ export async function GET(req: NextRequest) {
       beverage:         o.order_items?.beverage ?? '',
       notes:            o.order_items?.notes    ?? '',
     }));
+
+    // Audit every export so we know who pulled data and when
+    await auditLog(actor.id, 'admin.export', 'orders', null as any, {
+      row_count:   rows.length,
+      exported_at: new Date().toISOString(),
+    });
 
     const headers = Object.keys(rows[0] ?? {});
     const csv = [

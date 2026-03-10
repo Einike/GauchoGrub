@@ -33,6 +33,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'A valid reason is required' }, { status: 422 });
     if (!message || message.trim().length < 10)
       return NextResponse.json({ error: 'Please write at least 10 characters describing the issue' }, { status: 422 });
+    if (message.trim().length > 2000)
+      return NextResponse.json({ error: 'Message must be 2000 characters or fewer' }, { status: 422 });
 
     // Verify reported user exists
     const { data: reportedProfile } = await admin

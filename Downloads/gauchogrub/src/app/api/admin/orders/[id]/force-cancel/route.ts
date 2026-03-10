@@ -21,20 +21,37 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     const { error: orderErr } = await admin.from('orders')
       .update({ status: 'CANCELLED', updated_at: new Date().toISOString() }).eq('id', id);
     if (orderErr)
-      return NextResponse.json({ error: orderErr.message }, { status: 500 });
+      return NextResponse.json({ error: 'Failed to cancel order' }, { status: 500 });
 
-    // Restore listing to OPEN
-    await admin.from('listings')
-      .update({ status: 'OPEN', locked_by: null, lock_until: null })
+    // Restore listing — check expiry first (same logic as user cancel route)
+    const { data: listing } = await admin
+      .from('listings')
+      .select('expires_at')
       .eq('id', order.listing_id)
-      .in('status', ['LOCKED', 'IN_PROGRESS']);
+      .single();
 
-    await auditLog(actor.id, 'admin.force_cancel', 'order', id, { reason, prev_status: order.status });
+    const expired = !listing || new Date(listing.expires_at) <= new Date();
+    const listingPatch = expired
+      ? { status: 'EXPIRED' }
+      : { status: 'OPEN', locked_by: null, lock_until: null };
 
-    await notify(order.buyer_id, 'order_cancelled', '❌ Order cancelled by admin', reason, `/orders/${id}`);
-    await notify(order.seller_id, 'order_cancelled', '❌ Order cancelled by admin', reason, `/orders/${id}`);
+    await admin.from('listings')
+      .update(listingPatch)
+      .eq('id', order.listing_id)
+      .in('status', ['LOCKED', 'IN_PROGRESS', 'OPEN', 'CANCELLED']);
 
-    return NextResponse.json({ ok: true });
+    await auditLog(actor.id, 'admin.force_cancel', 'order', id, {
+      reason,
+      prev_status:      order.status,
+      listing_restored: !expired,
+    });
+
+    await Promise.all([
+      notify(order.buyer_id,  'order_cancelled', '❌ Order cancelled by admin', reason, `/orders/${id}`),
+      notify(order.seller_id, 'order_cancelled', '❌ Order cancelled by admin', reason, `/orders/${id}`),
+    ]);
+
+    return NextResponse.json({ ok: true, listing_restored: !expired });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: e.status ?? 500 });
   }

@@ -17,6 +17,6 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       },
     });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 401 });
+    return NextResponse.json({ error: e.message }, { status: e.status ?? 500 });
   }
 }

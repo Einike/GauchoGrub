@@ -21,7 +21,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       .eq('id', id);
     if (updateErr) {
       console.error('[accept] DB update failed:', updateErr);
-      return NextResponse.json({ error: `Failed to accept order: ${updateErr.message}` }, { status: 500 });
+      return NextResponse.json({ error: 'Failed to accept order' }, { status: 500 });
     }
 
     await auditLog(u.id, 'order.accept', 'order', id);

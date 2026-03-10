@@ -39,8 +39,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     if (upErr) {
       console.error('[qr.upload]', upErr);
       if (upErr.message.includes('Bucket not found') || upErr.message.includes('bucket'))
-        return NextResponse.json({ error: 'Storage bucket not configured. Run: npm run storage:setup' }, { status: 500 });
-      return NextResponse.json({ error: `Upload failed: ${upErr.message}` }, { status: 500 });
+        return NextResponse.json({ error: 'Storage not configured — contact support' }, { status: 500 });
+      return NextResponse.json({ error: 'Upload failed — please try again' }, { status: 500 });
     }
 
     // DB write — check error explicitly (storage succeeded, must not leave order stuck)
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       // File is in storage but order not advanced — attempt cleanup
       await admin.storage.from(BUCKET).remove([path]).catch(() => {});
       return NextResponse.json({
-        error: `QR uploaded to storage but failed to update order status: ${updateErr.message}. File rolled back.`,
+        error: 'QR upload failed — order status not updated. Please try again.',
       }, { status: 500 });
     }
 

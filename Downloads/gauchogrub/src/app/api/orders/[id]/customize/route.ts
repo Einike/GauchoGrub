@@ -41,10 +41,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     if (updateErr) {
       console.error('[customize] DB update failed:', updateErr);
       if (updateErr.message.includes('order_items') || updateErr.code === '42703')
-        return NextResponse.json({ error: 'Schema drift: order_items column missing. Run: npm run db:migrate', dev_hint: updateErr.message }, { status: 500 });
+        return NextResponse.json({ error: 'Failed to save order — schema issue. Contact support.' }, { status: 500 });
       if (updateErr.message.includes('orders_status_ck') || updateErr.code === '23514')
-        return NextResponse.json({ error: 'Schema drift: status constraint rejected BUYER_SUBMITTED. Run: npm run db:migrate', dev_hint: updateErr.message }, { status: 500 });
-      return NextResponse.json({ error: `Failed to save order: ${updateErr.message}` }, { status: 500 });
+        return NextResponse.json({ error: 'Failed to save order — status constraint. Contact support.' }, { status: 500 });
+      return NextResponse.json({ error: 'Failed to save order' }, { status: 500 });
     }
 
     // Belt-and-suspenders: verify write landed

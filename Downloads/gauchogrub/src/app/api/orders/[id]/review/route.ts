@@ -27,12 +27,16 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     if (!Number.isInteger(rating) || (rating as number) < 1 || (rating as number) > 5)
       return NextResponse.json({ error: 'Rating must be an integer from 1 to 5' }, { status: 422 });
 
+    const bodyText = typeof reviewBody === 'string' ? reviewBody.trim() : '';
+    if (bodyText.length > 1000)
+      return NextResponse.json({ error: 'Review text must be 1000 characters or fewer' }, { status: 422 });
+
     const { error: insertErr } = await admin.from('reviews').insert({
       order_id:  id,
       seller_id: order.seller_id,
       buyer_id:  u.id,
       rating,
-      body: typeof reviewBody === 'string' && reviewBody.trim() ? reviewBody.trim() : null,
+      body: bodyText || null,
     });
 
     if (insertErr) {
@@ -50,7 +54,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
     return NextResponse.json({ ok: true });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 401 });
+    return NextResponse.json({ error: e.message }, { status: e.status ?? 500 });
   }
 }
 
@@ -79,6 +83,6 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     }
     return NextResponse.json({ review: data ?? null });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 401 });
+    return NextResponse.json({ error: e.message }, { status: e.status ?? 500 });
   }
 }

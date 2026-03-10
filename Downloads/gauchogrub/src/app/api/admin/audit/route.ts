@@ -17,12 +17,14 @@ export async function GET(req: NextRequest) {
         .select('id,action,entity_type,entity_id,metadata,created_at,user_id')
         .order('created_at', { ascending: false }).limit(200),
       admin.from('listings')
-        .select('id,status,seller_id,price_cents,created_at,completed_at,expires_at,updated_at'),
+        .select('id,status,seller_id,price_cents,created_at,completed_at,expires_at,updated_at')
+        .order('created_at', { ascending: false }).limit(2000),
       admin.from('orders')
-        .select('id,status,buyer_id,seller_id,amount_cents,created_at,updated_at,listing_id,order_items,lock_expires_at'),
+        .select('id,status,buyer_id,seller_id,amount_cents,created_at,updated_at,listing_id,order_items,lock_expires_at')
+        .order('created_at', { ascending: false }).limit(2000),
       admin.from('notifications')
         .select('id,user_id,type,read_at,created_at').gte('created_at', s7d),
-      admin.from('profiles').select('id,username,email,created_at'),
+      admin.from('profiles').select('id,username,email,created_at').limit(2000),
     ]);
 
     const listings  = listingsRes.data  ?? [];
