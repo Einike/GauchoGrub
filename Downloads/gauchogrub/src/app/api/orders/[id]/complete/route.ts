@@ -33,8 +33,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     }
 
     await auditLog(u.id, 'order.complete', 'order', id);
-    await notify(order.seller_id, 'order_completed', '🎉 Order complete!',
-      'Buyer confirmed pickup. Transaction done!', `/orders/${id}`);
+    // Notify both parties
+    await Promise.all([
+      notify(order.seller_id, 'order_completed', '🎉 Sale complete!',
+        'Buyer confirmed pickup. Transaction done!', `/orders/${id}`),
+      notify(order.buyer_id, 'order_completed', '✅ Pickup confirmed!',
+        'Thanks for using GauchoGrub. Leave a review if you\'d like.', `/orders/${id}`),
+    ]);
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 401 });

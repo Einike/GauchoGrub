@@ -97,11 +97,27 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
     const other    = isBuyer ? order.seller_id : order.buyer_id;
     const isSeller = !isBuyer;
-    await notify(
-      other, 'order_cancelled', '❌ Order cancelled',
-      isSeller ? 'The seller cancelled this order.' : 'The buyer cancelled this order.',
-      `/orders/${id}`,
-    );
+
+    const notifPromises: Promise<unknown>[] = [
+      notify(
+        other, 'order_cancelled', '❌ Order cancelled',
+        isSeller ? 'The seller cancelled this order.' : 'The buyer cancelled this order.',
+        `/orders/${id}`,
+      ),
+    ];
+
+    // Notify seller when their listing is re-opened so they know it's live again
+    if (listingNextStatus === ListingStatus.OPEN && isBuyer) {
+      notifPromises.push(
+        notify(
+          order.seller_id, 'listing_reopened', '🔄 Listing back on board',
+          'The buyer cancelled — your listing is live again and available for others to claim.',
+          `/listings/${order.listing_id}`,
+        ),
+      );
+    }
+
+    await Promise.all(notifPromises);
 
     // Tell the client whether the listing was re-opened (so the buyer can be
     // redirected to the board to see it available again, if they want)
