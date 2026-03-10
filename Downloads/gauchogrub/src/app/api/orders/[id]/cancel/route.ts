@@ -19,7 +19,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     if ([OrderStatus.COMPLETED, OrderStatus.CANCELLED].includes(order.status as any))
       return NextResponse.json({ error: 'Cannot cancel at this stage' }, { status: 400 });
 
-    // Optional cancel reason (all fields nullable — cancellation proceeds even if body is absent)
+    // Optional cancel reason — cancellation proceeds even if body is absent or empty
     let cancel_reason_code: string | null = null;
     let cancel_reason_text: string | null = null;
     try {
@@ -28,20 +28,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         cancel_reason_code = body.cancel_reason_code.trim();
       if (typeof body.cancel_reason_text === 'string' && body.cancel_reason_text.trim())
         cancel_reason_text = body.cancel_reason_text.trim().slice(0, 500);
-    } catch { /* no body — fine */ }
+    } catch { /* no body is fine */ }
 
-    // Build update payload — core fields always present.
-    // Optional reason columns (added in migration 0008) are only included when
-    // non-null so a missing column never blocks a cancel with no reason provided.
+    // Core update — optional reason fields only sent when present
     const updatePayload: Record<string, unknown> = {
-      status:     OrderStatus.CANCELLED,
-      updated_at: new Date().toISOString(),
+      status:       OrderStatus.CANCELLED,
+      updated_at:   new Date().toISOString(),
       cancelled_by: u.id,
     };
     if (cancel_reason_code) updatePayload.cancel_reason_code = cancel_reason_code;
     if (cancel_reason_text) updatePayload.cancel_reason_text = cancel_reason_text;
 
-    // Update order — check error
     const { error: orderErr } = await admin.from('orders')
       .update(updatePayload)
       .eq('id', id);
@@ -50,37 +47,70 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       return NextResponse.json({ error: `Failed to cancel order: ${orderErr.message}` }, { status: 500 });
     }
 
-    // Restore listing based on current order stage:
-    // If the order was just LOCKED (buyer never submitted) → can safely reopen
-    // If order progressed further (seller engaged) → cancel listing entirely, don't re-open
-    const shouldReopen = order.status === OrderStatus.LOCKED;
-    const listingUpdate = shouldReopen
-      ? { status: ListingStatus.OPEN, locked_by: null, lock_until: null }
-      : { status: ListingStatus.CANCELLED };
+    // ── Listing restore logic ────────────────────────────────────────────────
+    // Fetch listing to check its expiry window
+    const { data: listing } = await admin
+      .from('listings')
+      .select('expires_at, status')
+      .eq('id', order.listing_id)
+      .single();
+
+    const now       = new Date();
+    const expired   = !listing || new Date(listing.expires_at) <= now;
+    const isBuyer   = u.id === order.buyer_id;
+
+    // Re-open rules:
+    //  • Listing still has time left AND cancel happened before seller invested effort
+    //    (LOCKED or BUYER_SUBMITTED) → re-open so another buyer can claim it
+    //  • Listing expired → mark EXPIRED so it no longer shows on the board
+    //  • Seller cancelled at SELLER_ACCEPTED or later, OR listing expired → CANCELLED
+    const earlyStage = [OrderStatus.LOCKED, OrderStatus.BUYER_SUBMITTED].includes(order.status as any);
+    let listingNextStatus: string;
+    let listingPatch: Record<string, unknown>;
+
+    if (!expired && earlyStage) {
+      listingNextStatus = ListingStatus.OPEN;
+      listingPatch = { status: ListingStatus.OPEN, locked_by: null, lock_until: null };
+    } else if (expired) {
+      listingNextStatus = ListingStatus.EXPIRED;
+      listingPatch = { status: ListingStatus.EXPIRED };
+    } else {
+      // Late-stage cancel (SELLER_ACCEPTED / QR_UPLOADED) — seller put in real effort;
+      // don't auto-re-list without seller deciding to post again.
+      listingNextStatus = ListingStatus.CANCELLED;
+      listingPatch = { status: ListingStatus.CANCELLED };
+    }
 
     const { error: listingErr } = await admin.from('listings')
-      .update(listingUpdate)
+      .update(listingPatch)
       .eq('id', order.listing_id);
     if (listingErr) {
-      // Non-fatal — order is cancelled, listing stuck in LOCKED is better than re-opening mid-order
+      // Non-fatal — order is cancelled; log but don't fail the response
       console.error('[cancel] listing update failed (non-fatal):', listingErr);
     }
 
-    await auditLog(u.id, 'order.cancel', 'order', id, { was_status: order.status });
+    await auditLog(u.id, 'order.cancel', 'order', id, {
+      was_status:    order.status,
+      listing_next:  listingNextStatus,
+      cancel_reason: cancel_reason_code,
+    });
 
-    const other    = u.id === order.buyer_id ? order.seller_id : order.buyer_id;
-    const isSeller = u.id === order.seller_id;
+    const other    = isBuyer ? order.seller_id : order.buyer_id;
+    const isSeller = !isBuyer;
     await notify(
       other, 'order_cancelled', '❌ Order cancelled',
-      isSeller
-        ? 'The seller cancelled this order.'
-        : 'The buyer cancelled this order.',
-      `/orders/${id}`
+      isSeller ? 'The seller cancelled this order.' : 'The buyer cancelled this order.',
+      `/orders/${id}`,
     );
 
-    return NextResponse.json({ ok: true });
+    // Tell the client whether the listing was re-opened (so the buyer can be
+    // redirected to the board to see it available again, if they want)
+    return NextResponse.json({
+      ok:               true,
+      listing_reopened: listingNextStatus === ListingStatus.OPEN,
+    });
   } catch (e: any) {
     console.error('[cancel] unexpected error:', e);
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return NextResponse.json({ error: e.message }, { status: e.status ?? 500 });
   }
 }

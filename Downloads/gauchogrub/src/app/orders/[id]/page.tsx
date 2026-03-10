@@ -79,6 +79,14 @@ export default function OrderPage() {
   const [cancelText, setCancelText] = useState('');
   const [cancelBusy, setCancelBusy] = useState(false);
 
+  // report sheet state
+  const [reportOpen,   setReportOpen]   = useState(false);
+  const [reportReason, setReportReason] = useState('');
+  const [reportMsg,    setReportMsg]    = useState('');
+  const [reportBusy,   setReportBusy]   = useState(false);
+  const [reportErr,    setReportErr]    = useState('');
+  const [reportDone,   setReportDone]   = useState(false);
+
   // review state — undefined=not fetched, null=no review yet, object=review exists
   const [review,   setReview]   = useState<Review|null|undefined>(undefined);
   const [rvRating, setRvRating] = useState(5);
@@ -164,8 +172,34 @@ export default function OrderPage() {
         }),
       }));
       setCancelOpen(false);
-      await reload();
+      // Buyers go back to the board; sellers stay to see their listing status
+      if (order?.buyer_id === myId) {
+        router.push('/board');
+      } else {
+        await reload();
+      }
     } catch (e: any) { setErr(e.message); } finally { setCancelBusy(false); }
+  };
+
+  const submitReport = async () => {
+    setReportErr('');
+    if (!reportReason) { setReportErr('Please select a reason'); return; }
+    if (reportMsg.trim().length < 10) { setReportErr('Please write at least 10 characters describing the issue'); return; }
+    try {
+      setReportBusy(true);
+      const other = order?.buyer_id === myId ? order?.seller_id : order?.buyer_id;
+      await jsonOrThrow(await authedFetch('/api/reports', {
+        method: 'POST',
+        body:   JSON.stringify({
+          reported_user_id: other,
+          order_id:         id,
+          reason_code:      reportReason,
+          message:          reportMsg.trim(),
+        }),
+      }));
+      setReportDone(true);
+      setReportOpen(false);
+    } catch (e: any) { setReportErr(e.message); } finally { setReportBusy(false); }
   };
 
   if (loading)  return <div className="p-6 flex justify-center"><div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>;
@@ -396,6 +430,64 @@ export default function OrderPage() {
             </section>
           )}
         </>
+      )}
+
+      {/* ── Report ──────────────────────────────────────────────────── */}
+      {(isBuyer || isSeller) && !reportDone && !reportOpen && (
+        <button onClick={() => setReportOpen(true)}
+          className="w-full py-2 rounded-xl border border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600 text-xs transition">
+          🚩 Report a problem with this transaction
+        </button>
+      )}
+
+      {reportDone && (
+        <p className="text-center text-slate-500 text-xs py-2">✓ Report submitted — our team will review it privately.</p>
+      )}
+
+      {reportOpen && (
+        <section className="rounded-2xl border border-slate-700 bg-slate-900/40 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-slate-300">🚩 Report a problem</p>
+            <button onClick={() => { setReportOpen(false); setReportErr(''); }}
+              className="text-slate-500 hover:text-white text-xs">✕ Close</button>
+          </div>
+          <p className="text-slate-500 text-xs">Reports are private and reviewed only by our team. They do not affect public ratings.</p>
+
+          <div className="space-y-1.5">
+            {[
+              { code: 'no_show',                label: 'No-show' },
+              { code: 'harassment',             label: 'Harassment / rude behavior' },
+              { code: 'spam_fake_listing',      label: 'Spam / fake listing' },
+              { code: 'scam_suspicious',        label: 'Scam / suspicious activity' },
+              { code: 'inappropriate_content',  label: 'Inappropriate content' },
+              { code: 'repeated_cancellations', label: 'Repeated cancellations' },
+              { code: 'other',                  label: 'Other' },
+            ].map(r => (
+              <button key={r.code} type="button"
+                onClick={() => setReportReason(c => c === r.code ? '' : r.code)}
+                className={`w-full text-left px-3 py-2 rounded-xl border text-sm transition
+                  ${reportReason === r.code
+                    ? 'border-slate-500 bg-slate-700 text-white'
+                    : 'border-slate-700 bg-slate-800/40 text-slate-400 hover:border-slate-600'}`}>
+                {r.label}
+              </button>
+            ))}
+          </div>
+
+          <textarea
+            value={reportMsg} onChange={e => setReportMsg(e.target.value)}
+            placeholder="Describe what happened (required, min 10 characters)…"
+            maxLength={1000} rows={3}
+            className="w-full rounded-xl bg-slate-800 border border-slate-600 text-sm text-white placeholder-slate-500 px-3 py-2 resize-none focus:outline-none focus:border-slate-500"
+          />
+
+          {reportErr && <p className="text-rose-400 text-sm">{reportErr}</p>}
+
+          <button disabled={reportBusy} onClick={submitReport}
+            className="w-full py-2.5 rounded-xl bg-slate-700 hover:bg-slate-600 disabled:opacity-60 text-white text-sm font-semibold transition">
+            {reportBusy ? '…' : 'Submit report'}
+          </button>
+        </section>
       )}
     </div>
   );

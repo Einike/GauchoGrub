@@ -253,6 +253,7 @@ export default function AuditPage() {
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            <button onClick={() => router.push('/admin/reports')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-900/40 border border-rose-800 hover:bg-rose-900/60 text-xs text-rose-300 transition">🚨 Reports</button>
             <button onClick={handleExport} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 transition">⬇ CSV</button>
             <button onClick={() => load(true)} disabled={refreshing}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-xs text-slate-300 transition">
