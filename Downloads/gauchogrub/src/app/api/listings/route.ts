@@ -44,14 +44,40 @@ export async function GET(req: NextRequest) {
     if (error) return NextResponse.json({ error: 'Failed to load listings' }, { status: 500 });
 
     const sellerIds = [...new Set((rows ?? []).map((r: any) => r.seller_id))];
-    let sellerMap: Record<string, string> = {};
+    let sellerMap:  Record<string, string> = {};
+    let repMap:     Record<string, { avg_rating: number; review_count: number }> = {};
+
     if (sellerIds.length) {
-      const { data: ps } = await admin.from('profiles').select('id,username').in('id', sellerIds);
-      sellerMap = Object.fromEntries((ps ?? []).map((p: any) => [p.id, p.username ?? 'seller']));
+      // Fetch profiles and reviews in parallel — same seller IDs, one round-trip each.
+      const [profilesRes, reviewsRes] = await Promise.all([
+        admin.from('profiles').select('id,username').in('id', sellerIds),
+        admin.from('reviews').select('seller_id,rating').in('seller_id', sellerIds),
+      ]);
+
+      sellerMap = Object.fromEntries(
+        (profilesRes.data ?? []).map((p: any) => [p.id, p.username ?? 'seller']),
+      );
+
+      // Aggregate ratings per seller in JS — avoids a GROUP BY on the DB side.
+      const ratingsBySeller: Record<string, number[]> = {};
+      for (const r of reviewsRes.data ?? []) {
+        (ratingsBySeller[r.seller_id] ??= []).push(r.rating);
+      }
+      for (const [sid, ratings] of Object.entries(ratingsBySeller)) {
+        repMap[sid] = {
+          review_count: ratings.length,
+          avg_rating:   Math.round(ratings.reduce((s, v) => s + v, 0) / ratings.length * 10) / 10,
+        };
+      }
     }
 
     return NextResponse.json({
-      listings: (rows ?? []).map((x: any) => ({ ...x, seller_username: sellerMap[x.seller_id] ?? 'seller' })),
+      listings: (rows ?? []).map((x: any) => ({
+        ...x,
+        seller_username:     sellerMap[x.seller_id] ?? 'seller',
+        seller_avg_rating:   repMap[x.seller_id]?.avg_rating   ?? null,
+        seller_review_count: repMap[x.seller_id]?.review_count ?? 0,
+      })),
     }, {
       headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' },
     });

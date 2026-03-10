@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabaseClient';
 // FIX: removed render-time call; closed is state updated via useEffect only
 import { getClosedReason } from '@/lib/ortegaHours';
 
-type L = { id:string; price_cents:number; seller_username:string; seller_id:string; expires_at:string; status:string };
+type L = { id:string; price_cents:number; seller_username:string; seller_id:string; expires_at:string; status:string; seller_avg_rating:number|null; seller_review_count:number };
 
 function Cd({ at }: { at: string }) {
   // FIX: initialise to '' so SSR and first client render both produce '' — no mismatch
@@ -123,7 +123,15 @@ export default function BoardPage() {
                       <span className="text-xl font-black">{isFree ? '🎁 Free' : `$${(x.price_cents/100).toFixed(2)}`}</span>
                       <span className="text-slate-400 text-sm">· Ortega meal</span>
                     </div>
-                    <p className="text-slate-400 text-sm">@{x.seller_username}</p>
+                    <div className="flex items-center gap-2 text-sm text-slate-400">
+                      <span>@{x.seller_username}</span>
+                      {x.seller_avg_rating != null && (
+                        <span className="text-yellow-400">⭐ {x.seller_avg_rating.toFixed(1)}</span>
+                      )}
+                      {x.seller_review_count > 0 && (
+                        <span className="text-slate-500">({x.seller_review_count})</span>
+                      )}
+                    </div>
                     <div className="flex flex-wrap gap-1.5 text-[11px]">
                       <span className="px-2 py-0.5 rounded-full bg-emerald-900/50 border border-emerald-700 text-emerald-300">OPEN</span>
                       <span className={`px-2 py-0.5 rounded-full border font-mono ${expiring ? 'bg-amber-900/50 border-amber-700 text-amber-300' : 'bg-slate-800 border-slate-600 text-slate-400'}`}>

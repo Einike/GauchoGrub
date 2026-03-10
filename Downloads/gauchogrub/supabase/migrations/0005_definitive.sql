@@ -17,6 +17,12 @@ do $$ declare r record; begin
   loop execute format('alter table listings drop constraint if exists %I', r.conname); end loop;
 end $$;
 
+-- Drop the partial index whose WHERE predicate references listings.status.
+-- PostgreSQL cannot change a column's type (even text→text with a USING clause)
+-- while an index has a predicate that depends on that column.
+-- This index is recreated with its correct final definition later in this migration.
+drop index if exists listings_one_active_per_seller;
+
 -- Ensure column is TEXT (handles both enum and previous text)
 alter table listings alter column status type text using status::text;
 
@@ -47,6 +53,28 @@ do $$ declare r record; begin
       and pg_get_constraintdef(c.oid) ilike '%status%'
   loop execute format('alter table orders drop constraint if exists %I', r.conname); end loop;
 end $$;
+
+-- Drop every object that holds a pg_depend entry on orders.status before the
+-- ALTER COLUMN TYPE.  PostgreSQL 15+ enforces two separate rules here:
+--
+--   (a) "cannot alter type of a column used in a policy definition"
+--       Root cause: 0003_notifications_reviews_storage.sql created the storage
+--       policy "seller_can_upload_qr" on storage.objects with a subquery that
+--       filters on `o.status in ('LOCKED','SELLER_ACCEPTED')`.  PostgreSQL
+--       records a cross-table column dependency in pg_depend when any policy
+--       expression (including subqueries) references a column on another table.
+--
+--   (b) "cannot alter type of column because there is an index depending on it"
+--       Root cause: 0004_full_overhaul.sql created the partial index
+--       orders_one_active_per_buyer with WHERE status IN (...), which also
+--       records a pg_depend entry on orders.status.
+--
+-- All three storage policies and the partial index are recreated with their
+-- correct final definitions later in this same migration.
+drop policy if exists "seller_can_upload_qr"     on storage.objects;
+drop policy if exists "seller_can_update_qr"     on storage.objects;
+drop policy if exists "participants_can_read_qr" on storage.objects;
+drop index  if exists orders_one_active_per_buyer;
 
 alter table orders alter column status type text using status::text;
 

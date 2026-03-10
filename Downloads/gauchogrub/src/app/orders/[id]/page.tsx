@@ -5,7 +5,17 @@ import { authedFetch, jsonOrThrow } from '@/lib/fetcher';
 import { supabase } from '@/lib/supabaseClient';
 import StatusTimeline from '@/components/StatusTimeline';
 
-type Order = { id:string; status:string; amount_cents:number; created_at:string; seller_id:string; buyer_id:string; lock_expires_at:string; qr_image_url:string|null; order_items:any };
+type Order  = { id:string; status:string; amount_cents:number; created_at:string; seller_id:string; buyer_id:string; lock_expires_at:string; qr_image_url:string|null; order_items:any };
+type Review = { id:string; rating:number; body:string|null; created_at:string };
+
+const CANCEL_REASONS: { code: string; label: string }[] = [
+  { code: 'changed_mind',      label: 'Changed my mind' },
+  { code: 'wait_too_long',     label: 'Wait is too long' },
+  { code: 'wrong_order',       label: 'Wrong items / misunderstanding' },
+  { code: 'seller_unresponsive', label: 'Seller not responding' },
+  { code: 'buyer_unresponsive',  label: 'Buyer not responding' },
+  { code: 'other',             label: 'Other' },
+];
 
 const BUYER_INFO: Record<string, { emoji:string; title:string; detail:string }> = {
   LOCKED:          { emoji:'🔒', title:'Meal locked',        detail:'Choose your food below before the timer runs out.' },
@@ -36,6 +46,20 @@ function Cd({ until }: { until: string }) {
   return <span className="font-mono text-amber-300">{t}</span>;
 }
 
+function StarPicker({ value, onChange }: { value: number; onChange: (n: number) => void }) {
+  return (
+    <div className="flex gap-1">
+      {[1,2,3,4,5].map(n => (
+        <button key={n} type="button" onClick={() => onChange(n)}
+          className={`text-3xl transition-transform active:scale-90 select-none
+            ${n <= value ? 'text-yellow-400' : 'text-slate-600 hover:text-yellow-500'}`}>
+          ★
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function OrderPage() {
   const { id }       = useParams<{ id:string }>();
   const router       = useRouter();
@@ -48,6 +72,19 @@ export default function OrderPage() {
   const [qrLoad,setQrLoad]  = useState(false);
   const [upLoad,setUpLoad]  = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // cancel sheet state
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelCode, setCancelCode] = useState('');
+  const [cancelText, setCancelText] = useState('');
+  const [cancelBusy, setCancelBusy] = useState(false);
+
+  // review state — undefined=not fetched, null=no review yet, object=review exists
+  const [review,   setReview]   = useState<Review|null|undefined>(undefined);
+  const [rvRating, setRvRating] = useState(5);
+  const [rvBody,   setRvBody]   = useState('');
+  const [rvBusy,   setRvBusy]   = useState(false);
+  const [rvErr,    setRvErr]    = useState('');
 
   const reload = async () => {
     try {
@@ -63,6 +100,18 @@ export default function OrderPage() {
     const t = setInterval(reload, 15_000);
     return () => clearInterval(t);
   }, [id]);
+
+  // Fetch the review once the order is COMPLETED and we know who the user is.
+  // Both buyer and seller can see the review via GET /api/orders/[id]/review.
+  useEffect(() => {
+    if (!order || !myId) return;
+    if (order.status !== 'COMPLETED') return;
+    if (order.buyer_id !== myId && order.seller_id !== myId) return;
+    authedFetch(`/api/orders/${id}/review`)
+      .then(r => r.json())
+      .then(d => setReview(d.review ?? null))
+      .catch(() => setReview(null));
+  }, [order?.status, myId, id]);
 
   const act = async (action: string, confirm_msg?: string) => {
     if (confirm_msg && !window.confirm(confirm_msg)) return;
@@ -90,6 +139,33 @@ export default function OrderPage() {
       const d = await jsonOrThrow<{ url:string }>(await authedFetch(`/api/orders/${id}/qr`));
       setQrUrl(d.url);
     } catch (e:any) { setErr(e.message); } finally { setQrLoad(false); }
+  };
+
+  const submitReview = async () => {
+    try {
+      setRvBusy(true); setRvErr('');
+      await jsonOrThrow(await authedFetch(`/api/orders/${id}/review`, {
+        method: 'POST',
+        body:   JSON.stringify({ rating: rvRating, body: rvBody.trim() || undefined }),
+      }));
+      // Optimistically show the submitted review without a round-trip
+      setReview({ id: 'local', rating: rvRating, body: rvBody.trim() || null, created_at: new Date().toISOString() });
+    } catch (e:any) { setRvErr(e.message); } finally { setRvBusy(false); }
+  };
+
+  const submitCancel = async () => {
+    try {
+      setCancelBusy(true); setErr('');
+      await jsonOrThrow(await authedFetch(`/api/orders/${id}/cancel`, {
+        method: 'POST',
+        body:   JSON.stringify({
+          cancel_reason_code: cancelCode || undefined,
+          cancel_reason_text: cancelText.trim() || undefined,
+        }),
+      }));
+      setCancelOpen(false);
+      await reload();
+    } catch (e: any) { setErr(e.message); } finally { setCancelBusy(false); }
   };
 
   if (loading)  return <div className="p-6 flex justify-center"><div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>;
@@ -228,13 +304,99 @@ export default function OrderPage() {
             {busy==='complete' ? '…' : '✓ I picked up my meal — mark complete'}
           </button>
         )}
-        {!['COMPLETED','CANCELLED'].includes(order.status) && (
-          <button disabled={busy==='cancel'} onClick={() => act('cancel','Cancel this order? The listing will go back to OPEN.')}
-            className="w-full py-3 rounded-xl border border-rose-700 text-rose-400 hover:bg-rose-950/30 disabled:opacity-50 font-medium text-sm transition">
-            {busy==='cancel' ? '…' : 'Cancel order'}
+        {!['COMPLETED','CANCELLED'].includes(order.status) && !cancelOpen && (
+          <button onClick={() => setCancelOpen(true)}
+            className="w-full py-3 rounded-xl border border-rose-700 text-rose-400 hover:bg-rose-950/30 font-medium text-sm transition">
+            Cancel order
           </button>
         )}
+        {!['COMPLETED','CANCELLED'].includes(order.status) && cancelOpen && (
+          <section className="rounded-2xl border border-rose-800 bg-rose-950/20 p-4 space-y-3">
+            <p className="text-rose-300 font-semibold text-sm">Why are you cancelling? <span className="text-slate-500 font-normal">(optional)</span></p>
+            <div className="grid grid-cols-1 gap-1.5">
+              {CANCEL_REASONS.map(r => (
+                <button key={r.code} type="button"
+                  onClick={() => setCancelCode(c => c === r.code ? '' : r.code)}
+                  className={`text-left px-3 py-2 rounded-xl border text-sm transition
+                    ${cancelCode === r.code
+                      ? 'border-rose-500 bg-rose-900/40 text-rose-200'
+                      : 'border-slate-700 bg-slate-800/40 text-slate-300 hover:border-rose-700'}`}>
+                  {r.label}
+                </button>
+              ))}
+            </div>
+            {(cancelCode === 'other' || cancelCode === '') && (
+              <textarea
+                value={cancelText} onChange={e => setCancelText(e.target.value)}
+                placeholder="Any additional details… (optional)"
+                maxLength={500} rows={2}
+                className="w-full rounded-xl bg-slate-800 border border-slate-600 text-sm text-white placeholder-slate-500 px-3 py-2 resize-none focus:outline-none focus:border-rose-600"
+              />
+            )}
+            <div className="flex gap-2">
+              <button onClick={() => { setCancelOpen(false); setCancelCode(''); setCancelText(''); }}
+                className="flex-1 py-2.5 rounded-xl border border-slate-600 text-slate-400 hover:text-white text-sm transition">
+                Never mind
+              </button>
+              <button disabled={cancelBusy} onClick={submitCancel}
+                className="flex-1 py-2.5 rounded-xl bg-rose-700 hover:bg-rose-600 disabled:opacity-60 text-white font-semibold text-sm transition">
+                {cancelBusy ? '…' : 'Confirm cancel'}
+              </button>
+            </div>
+          </section>
+        )}
       </div>
+
+      {/* ── Reviews ────────────────────────────────────────────────── */}
+      {order.status === 'COMPLETED' && (
+        <>
+          {/* Buyer: review form (only if no review submitted yet) */}
+          {isBuyer && review === null && (
+            <section className="rounded-2xl border border-yellow-700 bg-yellow-950/20 p-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">⭐</span>
+                <h2 className="font-bold text-yellow-300">Rate your seller</h2>
+              </div>
+              <p className="text-slate-400 text-sm">How did the transaction go? Your feedback helps the community.</p>
+              <StarPicker value={rvRating} onChange={setRvRating} />
+              <textarea
+                value={rvBody} onChange={e => setRvBody(e.target.value)}
+                placeholder="Optional note (max 500 chars)…"
+                maxLength={500}
+                rows={3}
+                className="w-full rounded-xl bg-slate-800 border border-slate-600 text-sm text-white placeholder-slate-500 px-3 py-2 resize-none focus:outline-none focus:border-yellow-600"
+              />
+              {rvErr && <p className="text-rose-400 text-sm">{rvErr}</p>}
+              <button disabled={rvBusy} onClick={submitReview}
+                className="w-full py-3 rounded-xl bg-yellow-600 hover:bg-yellow-500 disabled:opacity-60 font-bold text-sm transition">
+                {rvBusy ? '…' : '⭐ Submit review'}
+              </button>
+            </section>
+          )}
+
+          {/* Buyer: submitted review display */}
+          {isBuyer && review != null && (
+            <section className="rounded-2xl border border-slate-700 bg-slate-900/40 p-4 space-y-1">
+              <p className="text-sm font-semibold text-slate-300">Your review</p>
+              <p className="text-yellow-400 text-xl tracking-wide">
+                {'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}
+              </p>
+              {review.body && <p className="text-slate-400 text-sm italic">"{review.body}"</p>}
+            </section>
+          )}
+
+          {/* Seller: see the review they received */}
+          {isSeller && review != null && (
+            <section className="rounded-2xl border border-slate-700 bg-slate-900/40 p-4 space-y-1">
+              <p className="text-sm font-semibold text-slate-300">Buyer review</p>
+              <p className="text-yellow-400 text-xl tracking-wide">
+                {'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}
+              </p>
+              {review.body && <p className="text-slate-400 text-sm italic">"{review.body}"</p>}
+            </section>
+          )}
+        </>
+      )}
     </div>
   );
 }

@@ -19,9 +19,26 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     if ([OrderStatus.COMPLETED, OrderStatus.CANCELLED].includes(order.status as any))
       return NextResponse.json({ error: 'Cannot cancel at this stage' }, { status: 400 });
 
+    // Optional cancel reason (all fields nullable — cancellation proceeds even if body is absent)
+    let cancel_reason_code: string | null = null;
+    let cancel_reason_text: string | null = null;
+    try {
+      const body = await req.json();
+      if (typeof body.cancel_reason_code === 'string' && body.cancel_reason_code.trim())
+        cancel_reason_code = body.cancel_reason_code.trim();
+      if (typeof body.cancel_reason_text === 'string' && body.cancel_reason_text.trim())
+        cancel_reason_text = body.cancel_reason_text.trim().slice(0, 500);
+    } catch { /* no body — fine */ }
+
     // Update order — check error
     const { error: orderErr } = await admin.from('orders')
-      .update({ status: OrderStatus.CANCELLED, updated_at: new Date().toISOString() })
+      .update({
+        status:             OrderStatus.CANCELLED,
+        updated_at:         new Date().toISOString(),
+        cancelled_by:       u.id,
+        cancel_reason_code,
+        cancel_reason_text,
+      })
       .eq('id', id);
     if (orderErr) {
       console.error('[cancel] order update failed:', orderErr);
